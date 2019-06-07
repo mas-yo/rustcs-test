@@ -12,6 +12,15 @@ use std::path::Path;
 use std::prelude::*;
 use std::ptr;
 use std::time::{Duration, Instant};
+use std::str::FromStr;
+use std::str::from_utf8;
+use std::net::SocketAddr;
+use tokio::codec::{Decoder, Encoder, Framed};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::prelude::stream::SplitStream;
+use bytes::BytesMut;
+use bytes::BufMut;
+use futures::prelude::*;
 
 fn visit_dirs<F>(dir: &Path, cb: &mut F) -> io::Result<()>
 where
@@ -213,8 +222,158 @@ fn load_clr() -> Result<(*const c_void, c_uint, OnRecvFn), Box<Error>> {
     // }
 }
 
+#[derive(Debug, Clone)]
+pub enum C2S {
+    // ResponseLoginInfo(String),
+    // TouchUI(UIID),
+    InputText(String),
+    //    EnterRoom,
+}
+
+impl FromStr for C2S {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let splitted: Vec<&str> = s.split(',').collect();
+
+        if let Some(cmd) = splitted.get(0) {
+            // if *cmd == "response_login_info" {
+            //     return Ok(C2S::ResponseLoginInfo(splitted.get(1).unwrap().to_string()));
+            // }
+            // if *cmd == "touch_ui" {
+            //     return Ok(C2S::TouchUI(
+            //         splitted.get(1).unwrap().parse::<UIID>().unwrap(),
+            //     ));
+            // }
+            if *cmd == "input_text" {
+                return Ok(C2S::InputText(splitted.get(1).unwrap().to_string()));
+            }
+        }
+
+        Err(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum S2C {
+    RequestLoginInfo,
+    Message(String),
+    // ShowUI(UIID, bool),
+    // AddText(UIID, String),
+}
+
+impl ToString for S2C {
+    fn to_string(&self) -> String {
+        match self {
+            S2C::RequestLoginInfo => "request_login_info".to_string(),
+            S2C::Message(msg) => format!("> {}", msg),
+            // S2C::ShowUI(ui_id, show) => format!("show_ui,{},{}", ui_id, if *show { 1 } else { 0 }),
+            // S2C::AddText(ui_id, text) => format!("add_text,{},{}", ui_id, text),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Codec {
+    next_index: usize,
+}
+
+impl Codec {
+    pub fn new() -> Self {
+        Self { next_index: 0 }
+    }
+}
+
+impl Decoder for Codec {
+    type Item = C2S;
+    type Error = io::Error;
+
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, io::Error> {
+        let mut load = 0;
+        for i in 0..0 {
+            load = load + 1;
+        }
+        if let Some(newline_offset) = buf[self.next_index..].iter().position(|b| *b == b'\n') {
+            let newline_index = newline_offset + self.next_index;
+
+            let line = buf.split_to(newline_index + 1);
+
+            let line = &line[..line.len() - 1];
+
+            let line = from_utf8(&line).expect("invalid utf8 data");
+
+            self.next_index = 0;
+
+            if let Ok(cmd) = C2S::from_str(line) {
+                return Ok(Some(cmd));
+            }
+
+            panic!("unknown command");
+        } else {
+            self.next_index = buf.len();
+
+            Ok(None)
+        }
+    }
+}
+
+impl Encoder for Codec {
+    type Item = S2C;
+    type Error = io::Error;
+
+    fn encode(&mut self, cmd: S2C, buf: &mut BytesMut) -> Result<(), io::Error> {
+        // let mut file = File::open("/dev/null").unwrap();
+        let mut load = 0;
+        for i in 0..0 {
+            load = load + 1;
+        }
+
+        let mut line = cmd.to_string();
+
+        buf.reserve(line.len() + 1);
+        buf.put(line);
+        buf.put_u8(b'\n');
+
+        Ok(())
+    }
+}
+
+
+pub(crate) fn server<Codec>(
+    addr: &SocketAddr,
+)
+// -> impl Stream<Item = Framed<TcpStream, Codec>, Error = ()>
+where
+    Codec:'static + Decoder<Item = C2S, Error = std::io::Error>
+        + Encoder<Item = S2C, Error = std::io::Error>
+        + Default
+        + Send,
+{
+    let listener = TcpListener::bind(addr).unwrap();
+
+    let server = listener
+        .incoming()
+        .for_each(|socket| {
+            let framed = Framed::new(socket, Codec::default());
+            let recv = framed.for_each(move|cmd|{
+                Ok(())
+            })
+            .map_err(|_|());
+            tokio::spawn(recv);
+            Ok(())
+        })
+        .map(|_|())
+        .map_err(|_| println!("tcp incoming error"));
+
+    tokio::run(server);
+}
+
+
 fn main() -> Result<(), Box<Error>> {
     let (handle, domain_id, on_recv_fn) = load_clr()?;
+
+    let addr = SocketAddr::from_str("192.168.32.243:29180").unwrap();
+    server::<Codec>(&addr);
 
     Ok(())
 

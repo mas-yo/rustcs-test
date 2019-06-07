@@ -37,7 +37,9 @@ namespace game
         }
 
         public delegate void SendFn([In,Out] ObjInfo[] objinfo, int size);
-        public static void OnReceive(int x, int y, SendFn sendfn)
+
+        public static SendFn sendFn;
+        public static void OnReceive(int x, int y)//, SendFn sendfn)
         {
             ObjInfo[] data = new ObjInfo[50];
             for(int i = 0; i < 50; i++) {
@@ -46,7 +48,13 @@ namespace game
                 data[i].Y = y;
             }
 
-            sendfn(data, 50);
+            sendFn(data, 50);
+        }
+
+        public static void SetSendFn(SendFn f)
+        {
+            Console.WriteLine("cs - SetSendFn");
+            sendFn = f;
         }
 
         public static void SendCS(ObjInfo[] objinfo)

@@ -15,9 +15,12 @@ use std::time::{Duration, Instant};
 use std::str::FromStr;
 use std::str::from_utf8;
 use std::net::SocketAddr;
+use std::collections::*;
+use std::fmt::Debug;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::stream::SplitStream;
+use tokio::prelude::stream::SplitSink;
 use bytes::BytesMut;
 use bytes::BufMut;
 use futures::prelude::*;
@@ -89,26 +92,40 @@ CORECLR_HOSTING_API(coreclr_create_delegate,
             void** delegate);
 */
 
-struct ObjInfo {
+#[derive(Debug, Clone)]
+pub struct ObjInfo {
     name: *mut c_char,
     x: i32,
     y: i32,
 }
+// unsafe impl Send for Box<*const ObjInfo> {}
 
 type DoWorkFn = extern "C" fn(*const c_char, c_int, c_int, *const c_double, *const c_void);
 
-type OnRecvFn = extern "C" fn(c_int, c_int, *const c_void);
+type SetSendFn = extern "C" fn(*const c_void);
+type OnRecvFn = extern "C" fn(c_int, c_int);
 
 type SendFn = extern "C" fn(*const ObjInfo, i32);
 
+static mut s_tx : Option<SplitSink<Framed<TcpStream,Codec>>> = None;
+
 extern "C" fn Send(data: *const ObjInfo, size: i32) {
     unsafe {
-        let objs = std::slice::from_raw_parts(data, size as usize);
-        for o in objs {
-            // let s = CString::from_raw(o.name);
-            // println!("{} {} {}", s.into_string().unwrap(), o.x, o.y);
-        }
+        if s_tx.is_none() {return;}
+        let tx = s_tx.as_mut().unwrap();
+        // tx.start_send(S2C::RequestLoginInfo);
+        tx.start_send(S2C::ObjList((data,size)));
+        tx.poll_complete();
+        // sender.send(S2C::ObjList((data,size)));
     }
+
+    // unsafe {
+    //     let objs = std::slice::from_raw_parts(data, size as usize);
+    //     for o in objs {
+    //         // let s = CString::from_raw(o.name);
+    //         // println!("{} {} {}", s.into_string().unwrap(), o.x, o.y);
+    //     }
+    // }
 }
 
 //typedef char* (*doWork_ptr)(const char* jobName, int iterations, int dataSize, double* data, report_callback_ptr callbackFunction);
@@ -187,6 +204,28 @@ fn load_clr() -> Result<(*const c_void, c_uint, OnRecvFn), Box<Error>> {
     let TYPE_NAME = cstring("game.Class1");
 
     {
+        let set_send_fn: *const c_void = ptr::null();
+        let METHOD_NAME = cstring("SetSendFn");
+        let result = coreclr_create_delegate(
+            host_handle,
+            domain_id,
+            ASSEMBLY_NAME.as_ptr(),
+            TYPE_NAME.as_ptr(),
+            METHOD_NAME.as_ptr(),
+            &set_send_fn,
+        );
+        if result < 0 {
+            eprintln!("coreclr_create_delegate SetSendFn error {:#x}", result);
+            return Err(Box::new(SimpleError::new("coreclr_create_delegate error")));
+        }
+        unsafe {
+            let set_send_fn = std::mem::transmute::<*const c_void, SetSendFn>(set_send_fn);
+            let sendfn = std::mem::transmute::<SendFn, *const c_void>(Send);
+
+            set_send_fn(sendfn);
+        }
+    }
+    {
         let on_recv: *const c_void = ptr::null();
         let METHOD_NAME = cstring("OnReceive");
         let result = coreclr_create_delegate(
@@ -258,6 +297,7 @@ impl FromStr for C2S {
 pub enum S2C {
     RequestLoginInfo,
     Message(String),
+    ObjList((*const ObjInfo,i32)),
     // ShowUI(UIID, bool),
     // AddText(UIID, String),
 }
@@ -267,6 +307,17 @@ impl ToString for S2C {
         match self {
             S2C::RequestLoginInfo => "request_login_info".to_string(),
             S2C::Message(msg) => format!("> {}", msg),
+            S2C::ObjList((ptr, size)) => {
+                unsafe {
+                let objs = std::slice::from_raw_parts(ptr, *size as usize);
+                println!("sizxe: {}", objs.len());
+                let mut s = String::new();
+                for o in objs {
+                    s.push_str(&format!("{}:{},{}/", "testname", 1, 2));
+                }
+                s
+                }
+            }
             // S2C::ShowUI(ui_id, show) => format!("show_ui,{},{}", ui_id, if *show { 1 } else { 0 }),
             // S2C::AddText(ui_id, text) => format!("add_text,{},{}", ui_id, text),
         }
@@ -339,23 +390,34 @@ impl Encoder for Codec {
 }
 
 
-pub(crate) fn server<Codec>(
+pub(crate) fn server(
     addr: &SocketAddr,
+    on_recv_fn : OnRecvFn,
 )
 // -> impl Stream<Item = Framed<TcpStream, Codec>, Error = ()>
-where
-    Codec:'static + Decoder<Item = C2S, Error = std::io::Error>
-        + Encoder<Item = S2C, Error = std::io::Error>
-        + Default
-        + Send,
+// where
+//     C:'static + Decoder<Item = C2S, Error = std::io::Error>
+//         + Encoder<Item = S2C, Error = std::io::Error>
+//         + Default
+//         + Send,
 {
     let listener = TcpListener::bind(addr).unwrap();
 
     let server = listener
         .incoming()
-        .for_each(|socket| {
+        .for_each(move|socket| {
             let framed = Framed::new(socket, Codec::default());
-            let recv = framed.for_each(move|cmd|{
+            let (tx,rx) = framed.split();
+            // let i:i32 = tx;
+            unsafe{
+            s_tx = Some(tx);
+            }
+            let recv = rx.for_each(move|cmd|{
+                match cmd {
+                    C2S::InputText(txt) => {
+                        on_recv_fn(1,2);
+                    }
+                }
                 Ok(())
             })
             .map_err(|_|());
@@ -368,12 +430,59 @@ where
     tokio::run(server);
 }
 
+enum AsyncSendItem<P, D> {
+    Peer(P),
+    SendData(D),
+}
+
+fn async_sender<S, I>() -> futures::sync::mpsc::Sender<(Option<u32>, AsyncSendItem<S, I>)>
+where
+    S: 'static + Send + Sink<SinkItem = I>,
+    I: 'static + Send + Clone + Debug,
+    S::SinkError: Debug,
+{
+    let mut peers_tx = HashMap::new();
+    let (tx, rx) = futures::sync::mpsc::channel::<(Option<u32>, AsyncSendItem<S, I>)>(1024);
+    let task = rx.for_each(move |(peer_id, item)| {
+        match item {
+            AsyncSendItem::Peer(peer) => {
+                if peer_id.is_some() {
+                    peers_tx.insert(peer_id.unwrap(), peer.wait());
+                }
+            }
+            AsyncSendItem::SendData(data) => {
+                peers_tx.retain(|id, tx| {
+                    if peer_id.is_some() && peer_id.unwrap() != *id {
+                        return true;
+                    }
+                    // println!("send {:?} to {}", data, id);
+                    if let Err(e) = tx.send(data.clone()) {
+                        // println!("send err! {:?}", e);
+                        return false;
+                    }
+                    if let Err(_) = tx.flush() {
+                        println!("flush err");
+                        return false;
+                    }
+                    true
+                });
+            }
+        }
+        Ok(())
+    });
+
+    tokio::spawn(task.map_err(|e| {
+        println!("async send error {:?}", e);
+    }));
+
+    tx.clone()
+}
 
 fn main() -> Result<(), Box<Error>> {
     let (handle, domain_id, on_recv_fn) = load_clr()?;
 
     let addr = SocketAddr::from_str("192.168.32.243:29180").unwrap();
-    server::<Codec>(&addr);
+    server(&addr, on_recv_fn);
 
     Ok(())
 

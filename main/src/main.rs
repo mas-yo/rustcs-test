@@ -19,8 +19,7 @@ use std::collections::*;
 use std::fmt::Debug;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::prelude::stream::SplitStream;
-use tokio::prelude::stream::SplitSink;
+use tokio::prelude::stream::*;
 use bytes::BytesMut;
 use bytes::BufMut;
 use futures::prelude::*;
@@ -107,15 +106,16 @@ type OnRecvFn = extern "C" fn(c_int, c_int);
 
 type SendFn = extern "C" fn(*const ObjInfo, i32);
 
-static mut s_tx : Option<SplitSink<Framed<TcpStream,Codec>>> = None;
+static mut s_tx : Option<futures::sink::Wait<SplitSink<Framed<TcpStream,Codec>>>> = None;
 
 extern "C" fn Send(data: *const ObjInfo, size: i32) {
     unsafe {
         if s_tx.is_none() {return;}
         let tx = s_tx.as_mut().unwrap();
         // tx.start_send(S2C::RequestLoginInfo);
-        tx.start_send(S2C::ObjList((data,size)));
-        tx.poll_complete();
+        tx.send(S2C::ObjList((data,size)));
+        tx.flush();
+        // tx.poll_complete();
         // sender.send(S2C::ObjList((data,size)));
     }
 
@@ -310,8 +310,9 @@ impl ToString for S2C {
             S2C::ObjList((ptr, size)) => {
                 unsafe {
                 let objs = std::slice::from_raw_parts(ptr, *size as usize);
-                println!("sizxe: {}", objs.len());
+                // println!("sizxe: {}", objs.len());
                 let mut s = String::new();
+                s.push_str("objlist,");
                 for o in objs {
                     s.push_str(&format!("{}:{},{}/", "testname", 1, 2));
                 }
@@ -410,7 +411,7 @@ pub(crate) fn server(
             let (tx,rx) = framed.split();
             // let i:i32 = tx;
             unsafe{
-            s_tx = Some(tx);
+            s_tx = Some(tx.wait());
             }
             let recv = rx.for_each(move|cmd|{
                 match cmd {

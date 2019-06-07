@@ -75,6 +75,7 @@ namespace game
                             }
 
                             StringBuilder sb = new StringBuilder();
+                            sb.Append("objlist,");
                             foreach( var d in data ) {
                                 sb.AppendFormat("{0}:{1},{2}/", "testname", 1, 2);
                             }

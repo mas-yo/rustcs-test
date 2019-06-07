@@ -1,0 +1,13 @@
+[package]
+name = "testcl"
+version = "0.1.0"
+authors = ["Masahiro Yoshida <mypianoplayer@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tokio = "0.1.20"
+bytes = "0.4.11"
+rand = "*"
+uuid = { version = "0.7", features = ["v4"] }
+futures = "0.1.25"
+lazy_static = "1.2.0"

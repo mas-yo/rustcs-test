@@ -188,7 +188,7 @@ fn load_clr() -> i32 {
             let sendfn = std::mem::transmute::<SendFn, *const c_void>(Send);
 
             let start = Instant::now();
-            for i in 0..100000 {
+            for i in 0..1000000 {
                 on_recv(10, 20, sendfn);
             }
             let end = start.elapsed();

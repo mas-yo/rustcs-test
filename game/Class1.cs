@@ -28,10 +28,12 @@ namespace game
             Console.WriteLine("Instead, please use the SampleHost process to load this assembly.");
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
-            OnReceiveCS(30,40);
+            for(int i = 0;i < 1000000;i++) {
+                OnReceiveCS(30,40);
+            }
             sw.Stop();
             TimeSpan ts = sw.Elapsed;
-            Console.WriteLine("time {0}", ts.TotalMilliseconds);
+            Console.WriteLine("time {0}", (int)ts.TotalMilliseconds);
         }
 
         public delegate void SendFn([In,Out] ObjInfo[] objinfo, int size);

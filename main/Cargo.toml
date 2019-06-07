@@ -1,0 +1,9 @@
+[package]
+name = "main"
+version = "0.1.0"
+authors = ["Masahiro Yoshida <mypianoplayer@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+libc = "*"
+libloading = "*"

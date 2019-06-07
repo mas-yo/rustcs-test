@@ -9,6 +9,7 @@ use std::os::raw::*;
 use std::path::Path;
 use std::prelude::*;
 use std::ptr;
+use std::time::{Duration, Instant};
 
 fn visit_dirs<F>(dir: &Path, cb: &mut F) -> io::Result<()>
 where
@@ -77,10 +78,31 @@ CORECLR_HOSTING_API(coreclr_create_delegate,
             void** delegate);
 */
 
+struct ObjInfo {
+    name: *mut c_char,
+    x: i32,
+    y: i32,
+}
+
 type DoWorkFn = extern "C" fn (*const c_char, c_int, c_int, *const c_double, *const c_void);
+
+type OnRecvFn = extern "C" fn (c_int, c_int, *const c_void);
+
+type SendFn = extern "C" fn (*const ObjInfo, i32);
+
+extern "C" fn Send(data: *const ObjInfo, size:i32) {
+    unsafe {
+    let objs = std::slice::from_raw_parts(data, size as usize);
+    for o in objs {
+        // let s = CString::from_raw(o.name);
+        // println!("{} {} {}", s.into_string().unwrap(), o.x, o.y);
+    }
+    }
+}
 
 //typedef char* (*doWork_ptr)(const char* jobName, int iterations, int dataSize, double* data, report_callback_ptr callbackFunction);
 type CallBackFn = extern "C" fn (i32) -> i32;
+
 #[no_mangle]
 extern "C" fn ReportProgressCallback(i:i32) -> i32 {
     println!("callback {}", i);
@@ -119,7 +141,7 @@ fn load_clr() -> i32 {
         },
     );
 
-    println!("{}", tpa_list);
+    // println!("{}", tpa_list);
 
     let tpa_list = cstring(tpa_list);
 
@@ -150,35 +172,46 @@ fn load_clr() -> i32 {
         return 1;
     }
 
-    let do_work_ptr: *const c_void = ptr::null(); //DoWorkFn;
-    let ASSEMBLY_NAME = cstring("game, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");//("game, Version=1.0.0.0");
+    let ASSEMBLY_NAME = cstring("game, Version=1.0.0.0");//, Culture=neutral, PublicKeyToken=null");//("game, Version=1.0.0.0");
     let TYPE_NAME = cstring("game.Class1");
-    // let ASSEMBLY_NAME = cstring("ManagedLibrary, Version=1.0.0.0");
-    // let TYPE_NAME = cstring("ManagedLibrary.ManagedWorker");
-    let METHOD_NAME = cstring("DoWork");
-            // "ManagedLibrary, Version=1.0.0.0",
-            // "ManagedLibrary.ManagedWorker",
-    
-    // let result = coreclr_create_delegate(host_handle, domain_id, b"game\0".as_ptr(), b"game.Class1\0".as_ptr(), b"DoWork\0".as_ptr(), &do_work_ptr);
-    let result = coreclr_create_delegate(host_handle, domain_id, ASSEMBLY_NAME.as_ptr(), TYPE_NAME.as_ptr(), METHOD_NAME.as_ptr(), &do_work_ptr);
-    if result < 0 {
-        eprintln!("coreclr_create_delegate error {:#x}", result);
-        // return 1;
+
+    {
+        let on_recv: *const c_void = ptr::null();
+        let METHOD_NAME = cstring("OnReceive");
+        let result = coreclr_create_delegate(host_handle, domain_id, ASSEMBLY_NAME.as_ptr(), TYPE_NAME.as_ptr(), METHOD_NAME.as_ptr(), &on_recv);
+        if result < 0 {
+            eprintln!("coreclr_create_delegate error {:#x}", result);
+            return 1;
+        }
+        unsafe{
+            let on_recv = std::mem::transmute::<*const c_void, OnRecvFn>(on_recv);
+            let sendfn = std::mem::transmute::<SendFn, *const c_void>(Send);
+
+            let start = Instant::now();
+            for i in 0..100000 {
+                on_recv(10, 20, sendfn);
+            }
+            let end = start.elapsed();
+            println!("time: {}", end.as_millis());
+        }
+
     }
 
-    let mut data = [0.0f64,0.25f64,0.5f64,0.75f64];
-    // data[0] = 0.0;
-    // data[1] = 0.25;
-    // data[2] = 0.5;
-    // data[3] = 0.75;
-unsafe{
-    // Invoke the managed delegate and write the returned string to the console
-    let do_work_ptr = std::mem::transmute::<*const c_void, DoWorkFn>(do_work_ptr);
-    let cb = std::mem::transmute::<CallBackFn, *const c_void>(ReportProgressCallback);
-    do_work_ptr(cstring("Test job").as_ptr(), 5, 4, data.as_ptr(), cb);
-}
 
+    // let do_work_ptr: *const c_void = ptr::null(); //DoWorkFn;
+    // let METHOD_NAME = cstring("DoWork");
+    // let result = coreclr_create_delegate(host_handle, domain_id, ASSEMBLY_NAME.as_ptr(), TYPE_NAME.as_ptr(), METHOD_NAME.as_ptr(), &do_work_ptr);
+    // if result < 0 {
+    //     eprintln!("coreclr_create_delegate error {:#x}", result);
+    //     return 1;
+    // }
 
+    // let mut data = [0.0f64,0.25f64,0.5f64,0.75f64];
+    // unsafe{
+    //     let do_work_ptr = std::mem::transmute::<*const c_void, DoWorkFn>(do_work_ptr);
+    //     let cb = std::mem::transmute::<CallBackFn, *const c_void>(ReportProgressCallback);
+    //     do_work_ptr(cstring("Test job").as_ptr(), 5, 4, data.as_ptr(), cb);
+    // }
 
     let result = coreclr_shutdown(host_handle, domain_id);
     if result < 0 {

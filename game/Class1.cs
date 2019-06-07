@@ -5,6 +5,20 @@ using System.Threading;
 
 namespace game
 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct ObjInfo
+    {
+        public string Name;
+        public int X;
+        public int Y;
+
+        public ObjInfo(string name, int x, int y)
+        {
+            this.Name = name;
+            this.X = x;
+            this.Y = y;
+        }
+    }
     public class Class1
     {
         public static void Main()
@@ -12,7 +26,46 @@ namespace game
             Console.WriteLine("{0}", System.Reflection.Assembly.GetExecutingAssembly().FullName);
             Console.WriteLine("This assembly is not meant to be run directly.");
             Console.WriteLine("Instead, please use the SampleHost process to load this assembly.");
+            var sw = new System.Diagnostics.Stopwatch();
+            sw.Start();
+            OnReceiveCS(30,40);
+            sw.Stop();
+            TimeSpan ts = sw.Elapsed;
+            Console.WriteLine("time {0}", ts.TotalMilliseconds);
         }
+
+        public delegate void SendFn([In,Out] ObjInfo[] objinfo, int size);
+        public static void OnReceive(int x, int y, SendFn sendfn)
+        {
+            ObjInfo[] data = new ObjInfo[50];
+            for(int i = 0; i < 50; i++) {
+                data[i].Name = "aaaaa";
+                data[i].X = x;
+                data[i].Y = y;
+            }
+
+            sendfn(data, 50);
+        }
+
+        public static void SendCS(ObjInfo[] objinfo)
+        {
+            foreach(var obj in objinfo){
+                // Console.Write("{0}", obj.X);
+            }
+        }
+        public static void OnReceiveCS(int x, int y)
+        {
+            ObjInfo[] data = new ObjInfo[50];
+            for(int i = 0; i < 50; i++) {
+                data[i].Name = "aaaaa";
+                data[i].X = x;
+                data[i].Y = y;
+            }
+            SendCS(data);
+        }
+
+
+
         public delegate int ReportProgressFunction(int progress);
 
         // This test method doesn't actually do anything, it just takes some input parameters,
